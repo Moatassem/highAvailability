@@ -1,0 +1,258 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"log"
+	"net"
+	"net/http"
+	"net/netip"
+	"os"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/mdlayher/arp"
+	"github.com/mdlayher/ethernet"
+	"github.com/vishvananda/netlink"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/concurrency"
+)
+
+type AppConfig struct {
+	NodeID        string
+	ETCDEndpoints []string
+	VIP           string
+	Interface     string
+	HTTPPort      string
+}
+
+type ApplicationState struct {
+	data     map[string]string
+	mu       sync.RWMutex
+	isLeader bool
+	leaderMu sync.Mutex
+}
+
+func main() {
+	cfg := AppConfig{
+		NodeID:        getEnv("NODE_ID", "node1"),
+		ETCDEndpoints: getSliceEnv("ETCD_ENDPOINTS", []string{"http://127.0.0.1:2379"}),
+		VIP:           getEnv("VIP", "192.168.1.100/24"),
+		Interface:     getEnv("INTERFACE", "eth0"),
+		HTTPPort:      getEnv("HTTP_PORT", ":8080"),
+	}
+
+	appState := &ApplicationState{
+		data: make(map[string]string),
+	}
+
+	etcdClient, err := clientv3.New(clientv3.Config{
+		Endpoints:   cfg.ETCDEndpoints,
+		DialTimeout: 5 * time.Second,
+	})
+	if err != nil {
+		log.Fatalf("ETCD connection failed: %v", err)
+	}
+	defer etcdClient.Close()
+
+	go runLeaderElection(etcdClient, cfg, appState)
+	go watchStateChanges(etcdClient, appState)
+
+	select {} // Block indefinitely
+}
+
+func runLeaderElection(client *clientv3.Client, cfg AppConfig, state *ApplicationState) {
+	for {
+		session, err := concurrency.NewSession(client, concurrency.WithTTL(10))
+		if err != nil {
+			log.Printf("Session creation error: %v", err)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+
+		election := concurrency.NewElection(session, "/service/leader")
+		if err := election.Campaign(context.TODO(), cfg.NodeID); err != nil {
+			session.Close()
+			time.Sleep(2 * time.Second)
+			continue
+		}
+
+		log.Println("Became leader")
+		state.setLeader(true)
+
+		if err := manageVIP(cfg, true); err != nil {
+			log.Printf("VIP assignment failed: %v", err)
+			election.Resign(context.TODO())
+			session.Close()
+			continue
+		}
+
+		server := startWebServer(cfg, client, state)
+
+		select {
+		case <-session.Done():
+			log.Println("Lost leadership")
+			state.setLeader(false)
+			server.Shutdown(context.TODO())
+			manageVIP(cfg, false)
+			session.Close()
+		}
+	}
+}
+
+func manageVIP(cfg AppConfig, add bool) error {
+	link, err := netlink.LinkByName(cfg.Interface)
+	if err != nil {
+		return err
+	}
+
+	addr, err := netlink.ParseAddr(cfg.VIP)
+	if err != nil {
+		return err
+	}
+
+	if add {
+		if err := netlink.AddrReplace(link, addr); err != nil {
+			return err
+		}
+		return sendGARP(cfg)
+	}
+	return netlink.AddrDel(link, addr)
+}
+
+func sendGARP(cfg AppConfig) error {
+	iface, err := net.InterfaceByName(cfg.Interface)
+	if err != nil {
+		return err
+	}
+
+	client, err := arp.Dial(iface)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	ipStr := strings.Split(cfg.VIP, "/")[0]
+	ip, err := netip.ParseAddr(ipStr)
+	if err != nil {
+		return err
+	}
+
+	pkt, err := arp.NewPacket(
+		arp.OperationReply,
+		iface.HardwareAddr,
+		ip,
+		iface.HardwareAddr,
+		ip,
+	)
+	if err != nil {
+		return err
+	}
+
+	return client.WriteTo(pkt, ethernet.Broadcast)
+}
+
+func startWebServer(cfg AppConfig, etcd *clientv3.Client, state *ApplicationState) *http.Server {
+	server := &http.Server{
+		Addr: cfg.HTTPPort,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			state.mu.RLock()
+			defer state.mu.RUnlock()
+
+			switch r.Method {
+			case "GET":
+				json.NewEncoder(w).Encode(state.data)
+			case "POST":
+				if !state.IsLeader() {
+					http.Error(w, "Not leader", http.StatusServiceUnavailable)
+					return
+				}
+
+				var update map[string]string
+				if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+
+				state.mu.Lock()
+				for k, v := range update {
+					state.data[k] = v
+				}
+				if err := persistState(etcd, state.data); err != nil {
+					http.Error(w, "State sync failed", http.StatusInternalServerError)
+				}
+				state.mu.Unlock()
+			default:
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			}
+		}),
+	}
+
+	go func() {
+		log.Printf("Starting HTTP server on %s", cfg.HTTPPort)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("HTTP server error: %v", err)
+		}
+	}()
+
+	return server
+}
+
+func persistState(etcd *clientv3.Client, data map[string]string) error {
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+
+	_, err = etcd.Put(context.TODO(), "/service/state", string(jsonData))
+	return err
+}
+
+func watchStateChanges(etcd *clientv3.Client, state *ApplicationState) {
+	watchChan := etcd.Watch(context.Background(), "/service/state")
+	for resp := range watchChan {
+		for _, ev := range resp.Events {
+			if ev.IsModify() || ev.IsCreate() {
+				var newState map[string]string
+				if err := json.Unmarshal(ev.Kv.Value, &newState); err != nil {
+					log.Printf("State unmarshal error: %v", err)
+					continue
+				}
+
+				if !state.IsLeader() {
+					state.mu.Lock()
+					state.data = newState
+					state.mu.Unlock()
+				}
+			}
+		}
+	}
+}
+
+// Helper methods
+func (s *ApplicationState) IsLeader() bool {
+	s.leaderMu.Lock()
+	defer s.leaderMu.Unlock()
+	return s.isLeader
+}
+
+func (s *ApplicationState) setLeader(leader bool) {
+	s.leaderMu.Lock()
+	defer s.leaderMu.Unlock()
+	s.isLeader = leader
+}
+
+func getEnv(key, fallback string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return fallback
+}
+
+func getSliceEnv(key string, fallback []string) []string {
+	if value, ok := os.LookupEnv(key); ok {
+		return strings.Split(value, ",")
+	}
+	return fallback
+}
