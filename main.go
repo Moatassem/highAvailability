@@ -307,7 +307,6 @@ func (nds *NodeState) seizeVIP(cfg Config) {
 		return
 	}
 	log.Printf("Virtual (floating) IP is (%s) currently tied to Hardware Address: %s - Expected: %s", cfg.VIP, resolvedMAC, nds.SelfMAC)
-
 }
 
 func (nds *NodeState) sendHeartbeat() {
