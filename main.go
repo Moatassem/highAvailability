@@ -24,8 +24,6 @@ const (
 	heartbeatTimeout  = 50 * time.Millisecond
 	heartbeatInterval = 10 * time.Millisecond
 
-	// heartbeatTimeout  = 10 * time.Second
-	// heartbeatInterval = 1 * time.Second
 	heartbeatMissed = 10
 	GARPAttempts    = 10
 )
@@ -302,9 +300,9 @@ func (nds *NodeState) becomeActive(cfg Config) {
 
 	resolvedMAC, ok := getVIPMAC(client, cfg)
 	if ok {
-
+		log.Printf("Virtual (floating) IP is (%s) currently tied to Hardware Address: %s", cfg.VIP, nds.SelfMAC)
+		return
 	}
-
 	log.Printf("Virtual (floating) IP is (%s) currently tied to Hardware Address: %s - Expected: %s", cfg.VIP, resolvedMAC, nds.SelfMAC)
 }
 
@@ -374,11 +372,13 @@ func getVIPMAC(clnt *arp.Client, cfg Config) (string, bool) {
 
 	hwaddr, err := clnt.Resolve(cfg.VIPAddr)
 	if err != nil {
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			return "N/A", true
+		}
 		log.Printf("ARP request send error: %v", err)
 		return "N/A", false
 	}
-
-	return hwaddr.String(), true
+	return hwaddr.String(), false
 }
 
 func getEnv(key, fallback string) string {
