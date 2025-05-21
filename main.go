@@ -59,11 +59,17 @@ func NewNodeSS(cfg Config) *NodeState {
 	return &NodeState{SelfMAC: cfg.Interface.HardwareAddr.String()}
 }
 
-func (nds *NodeState) MarshalMe() ([]byte, error) {
-	if nds.IsActive {
-		nds.mu.RLock()
-		defer nds.mu.RUnlock()
+func (nds *NodeState) GetIfActive() bool {
+	nds.mu.RLock()
+	defer nds.mu.RUnlock()
 
+	return nds.IsActive
+}
+
+func (nds *NodeState) MarshalMe() ([]byte, error) {
+	nds.mu.RLock()
+	defer nds.mu.RUnlock()
+	if nds.IsActive {
 		return json.Marshal(nds)
 	}
 	return json.Marshal(StandbyState)
@@ -218,7 +224,7 @@ func (nds *NodeState) httpServer(cfg Config) {
 	http.HandleFunc("/", nds.SendData)
 
 	http.HandleFunc("/update", func(w http.ResponseWriter, r *http.Request) {
-		if !nds.IsActive {
+		if !nds.GetIfActive() {
 			http.Error(w, "Not Active Node", http.StatusConflict)
 			return
 		}
