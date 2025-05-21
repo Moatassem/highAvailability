@@ -282,6 +282,7 @@ func (nds *NodeState) setPeerStatus(sts bool, msg string) {
 
 func (nds *NodeState) becomeActive(cfg Config) {
 	nds.mu.Lock()
+	defer nds.mu.Unlock()
 
 	if nds.IsActive {
 		return
@@ -292,10 +293,12 @@ func (nds *NodeState) becomeActive(cfg Config) {
 		log.Printf("VIP assignment failed: %v", err)
 		return
 	}
-
 	nds.IsActive = true
-	nds.mu.Unlock()
 
+	go nds.seizeVIP(cfg)
+}
+
+func (nds *NodeState) seizeVIP(cfg Config) {
 	client := sendMultiGARPs(cfg)
 
 	resolvedMAC, ok := getVIPMAC(client, cfg)
@@ -304,6 +307,7 @@ func (nds *NodeState) becomeActive(cfg Config) {
 		return
 	}
 	log.Printf("Virtual (floating) IP is (%s) currently tied to Hardware Address: %s - Expected: %s", cfg.VIP, resolvedMAC, nds.SelfMAC)
+
 }
 
 func (nds *NodeState) sendHeartbeat() {
