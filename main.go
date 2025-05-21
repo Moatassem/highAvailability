@@ -1,7 +1,6 @@
 package main
 
 import (
-	"cmp"
 	"encoding/json"
 	"log"
 	"net"
@@ -302,14 +301,11 @@ func (nds *NodeState) becomeActive(cfg Config) {
 	client := sendMultiGARPs(cfg)
 
 	resolvedMAC, ok := getVIPMAC(client, cfg)
-	confirmed := " (Unconfirmed)"
 	if ok {
-		confirmed = " (Confirmed)"
+
 	}
 
-	vipmac := cmp.Or(resolvedMAC, nds.SelfMAC)
-
-	log.Printf("Virtual (floating) IP is (%s) currently tied to Hardware Address: %s%s", cfg.VIP, vipmac, confirmed)
+	log.Printf("Virtual (floating) IP is (%s) currently tied to Hardware Address: %s - Expected: %s", cfg.VIP, resolvedMAC, nds.SelfMAC)
 }
 
 func (nds *NodeState) sendHeartbeat() {
@@ -359,7 +355,7 @@ func sendMultiGARPs(cfg Config) *arp.Client {
 
 	for range GARPAttempts {
 		if err := client.WriteTo(pkt, ethernet.Broadcast); err != nil {
-			log.Printf("GARP send error: %v", err)
+			log.Printf("GARP reply send error: %v", err)
 		}
 		time.Sleep(heartbeatTimeout)
 	}
@@ -369,14 +365,17 @@ func sendMultiGARPs(cfg Config) *arp.Client {
 
 func getVIPMAC(clnt *arp.Client, cfg Config) (string, bool) {
 	if clnt == nil {
-		return "", false
+		return "N/A", false
 	}
 	defer clnt.Close()
 
+	deadline := time.Now().Add(heartbeatTimeout)
+	clnt.SetReadDeadline(deadline)
+
 	hwaddr, err := clnt.Resolve(cfg.VIPAddr)
 	if err != nil {
-		log.Printf("ARP resolve error: %v", err)
-		return "", false
+		log.Printf("ARP request send error: %v", err)
+		return "N/A", false
 	}
 
 	return hwaddr.String(), true
