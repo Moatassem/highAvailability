@@ -282,7 +282,6 @@ func (nds *NodeState) setPeerStatus(sts bool, msg string) {
 
 func (nds *NodeState) becomeActive(cfg Config) {
 	nds.mu.Lock()
-	defer nds.mu.Unlock()
 
 	if nds.IsActive {
 		return
@@ -295,6 +294,7 @@ func (nds *NodeState) becomeActive(cfg Config) {
 	}
 
 	nds.IsActive = true
+	nds.mu.Unlock()
 
 	client := sendMultiGARPs(cfg)
 
