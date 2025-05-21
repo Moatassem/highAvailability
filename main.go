@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"log"
 	"net"
@@ -291,16 +292,24 @@ func (nds *NodeState) becomeActive(cfg Config) {
 	}
 
 	log.Print("Assuming myself as the Active Node")
-	nds.IsActive = true
 	if err := manageVIP(cfg, true); err != nil {
 		log.Printf("VIP assignment failed: %v", err)
 		return
 	}
-	for range GARPAttempts {
-		nds.sendGARP(cfg)
-		time.Sleep(100 * time.Millisecond)
+
+	nds.IsActive = true
+
+	client := sendMultiGARPs(cfg)
+
+	resolvedMAC, ok := getVIPMAC(client, cfg)
+	confirmed := " (Unconfirmed)"
+	if ok {
+		confirmed = " (Confirmed)"
 	}
-	log.Printf("Virtual (floating) IP is (%s) currently tied to Hardware Address: %s", cfg.VIP, nds.SelfMAC)
+
+	vipmac := cmp.Or(resolvedMAC, nds.SelfMAC)
+
+	log.Printf("Virtual (floating) IP is (%s) currently tied to Hardware Address: %s%s", cfg.VIP, vipmac, confirmed)
 }
 
 func (nds *NodeState) sendHeartbeat() {
@@ -334,24 +343,43 @@ func manageVIP(cfg Config, add bool) error {
 	return netlink.AddrDel(cfg.Link, cfg.LinkAddr)
 }
 
-func (nds *NodeState) sendGARP(cfg Config) {
+func sendMultiGARPs(cfg Config) *arp.Client {
 	client, err := arp.Dial(cfg.Interface)
 	if err != nil {
 		log.Printf("ARP client error: %v", err)
-		return
+		return nil
 	}
-	defer client.Close()
 
 	pkt, err := arp.NewPacket(arp.OperationReply, cfg.Interface.HardwareAddr, cfg.VIPAddr, cfg.Interface.HardwareAddr, cfg.VIPAddr)
 
 	if err != nil {
 		log.Printf("ARP packet error: %v", err)
-		return
+		return nil
 	}
 
-	if err := client.WriteTo(pkt, ethernet.Broadcast); err != nil {
-		log.Printf("GARP send error: %v", err)
+	for range GARPAttempts {
+		if err := client.WriteTo(pkt, ethernet.Broadcast); err != nil {
+			log.Printf("GARP send error: %v", err)
+		}
+		time.Sleep(heartbeatTimeout)
 	}
+
+	return client
+}
+
+func getVIPMAC(clnt *arp.Client, cfg Config) (string, bool) {
+	if clnt == nil {
+		return "", false
+	}
+	defer clnt.Close()
+
+	hwaddr, err := clnt.Resolve(cfg.VIPAddr)
+	if err != nil {
+		log.Printf("ARP resolve error: %v", err)
+		return "", false
+	}
+
+	return hwaddr.String(), true
 }
 
 func getEnv(key, fallback string) string {
