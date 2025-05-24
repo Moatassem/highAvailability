@@ -1,7 +1,5 @@
 #!/bin/bash
 
-rm ./updateNrun.sh
-
 cd ~/Downloads/highAvailability/
 git pull --force
 go build -o ha-webserver
