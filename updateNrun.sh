@@ -5,10 +5,22 @@ git pull
 go build -o ha-webserver
 
 iface=$(ip -o link show | awk '!/lo/ {print $2; exit}' | sed 's/://')
+
+if [ -z "$iface" ]; then
+    echo "Error: Could not retrieve interface name."
+    exit 1
+fi
+
+
 ipv4=$(ip -4 a show $iface | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
 
+if [ -z "$ipv4" ]; then
+    echo "Error: Could not retrieve IPv4 address."
+    exit 1
+fi
 
-if [$ipv4 -eq "192.168.1.30"];then
+
+if ["$ipv4" = "192.168.1.30"];then
     peeripv4="192.168.1.40"
 else
     peeripv4="192.168.1.30"
