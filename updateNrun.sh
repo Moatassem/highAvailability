@@ -1,7 +1,9 @@
 #!/bin/bash
 
+rm ./updateNrun.sh
+
 cd ~/Downloads/highAvailability/
-git pull
+git pull --force
 go build -o ha-webserver
 
 iface=$(ip -o link show | awk '!/lo/ {print $2; exit}' | sed 's/://')
@@ -20,7 +22,7 @@ if [ -z "$ipv4" ]; then
 fi
 
 
-if ["$ipv4" = "192.168.1.30"];then
+if [ "$ipv4" = "192.168.1.30" ]; then
     peeripv4="192.168.1.40"
 else
     peeripv4="192.168.1.30"
