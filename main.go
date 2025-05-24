@@ -25,7 +25,7 @@ const (
 	heartbeatTimeout  = 50 * time.Millisecond
 	heartbeatInterval = 10 * time.Millisecond
 
-	heartbeatMissed = 10
+	heartbeatsCount = 5
 	GARPAttempts    = 5
 )
 
@@ -261,7 +261,7 @@ func (nds *NodeState) activeElection(cfg Config) {
 		nds.sendHeartbeat()
 		if nds.LastContact.IsZero() {
 			timeOuts++
-			if timeOuts >= heartbeatMissed {
+			if timeOuts >= heartbeatsCount {
 				nds.setPeerStatus(false, "Peer Node undetected!")
 				timeOuts = 0
 				nds.becomeActive(cfg)
@@ -270,7 +270,6 @@ func (nds *NodeState) activeElection(cfg Config) {
 			timeOuts = 0
 			if time.Since(nds.LastContact) >= heartbeatTimeout {
 				nds.setPeerStatus(false, "Peer Node dead!")
-
 				nds.becomeActive(cfg)
 			}
 		}
