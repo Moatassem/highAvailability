@@ -18,6 +18,7 @@ import (
 	"github.com/mdlayher/arp"
 	"github.com/mdlayher/ethernet"
 	"github.com/vishvananda/netlink"
+	"golang.org/x/net/ipv4"
 )
 
 const (
@@ -184,6 +185,12 @@ func (nds *NodeState) udpListener(cfg Config) {
 	defer conn.Close()
 
 	nds.myConn = conn
+
+	dscpEF := 46 << 2
+	p := ipv4.NewPacketConn(conn)
+	if err = p.SetTOS(dscpEF); err != nil {
+		log.Printf("Failed to set IPv4 TOS: %v (may need CAP_NET_ADMIN)", err)
+	}
 
 	buf := make([]byte, 4096)
 	for {
