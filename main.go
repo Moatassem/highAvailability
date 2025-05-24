@@ -26,7 +26,7 @@ const (
 	heartbeatInterval = 10 * time.Millisecond
 
 	heartbeatMissed = 10
-	GARPAttempts    = 10
+	GARPAttempts    = 5
 )
 
 var StandbyState *NodeState
