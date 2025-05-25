@@ -176,7 +176,7 @@ func (nds *NodeState) initializeNode(cfg Config) {
 		log.Fatal("UDP listen error:", err)
 	}
 	//nolint:errcheck
-	defer conn.Close()
+	// defer conn.Close()
 
 	nds.myConn = conn
 
