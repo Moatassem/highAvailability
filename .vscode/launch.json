@@ -11,10 +11,12 @@
       "mode": "debug",
       "program": "${workspaceFolder}/main.go",
       "env": {
+        "ACTIVE_NODE_WS":"192.168.1.30:8080",
         "VIP_MASK": "192.168.1.100/24",
         "OWN_PORT": "9090",
         "PEER_ADDR": "192.168.1.40:9090",
-        "INTERFACE": "ens33"
+        "INTERFACE": "ens33",
+        "HTTP_PORT":"8080"
       }
     }
   ]

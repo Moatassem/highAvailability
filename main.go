@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -82,6 +83,7 @@ func (nds *NodeState) SendData(w http.ResponseWriter, _ *http.Request) {
 
 type Config struct {
 	NodeID     string
+	OwnIPv4    string
 	OwnPort    string
 	PeerSocket string
 	VIP        string
@@ -94,18 +96,18 @@ type Config struct {
 }
 
 func (cfg *Config) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
-	mp := make(map[string]string, 5)
+	mp := make(map[string]string, 4)
 	mp["vipmask"] = cfg.VIPMask
 	mp["ifacename"] = cfg.Interface.Name
-	mp["prt"] = cfg.OwnPort
-	mp["prskt"] = cfg.PeerSocket
+	// mp["prt"] = cfg.OwnPort
+	mp["prskt"] = cfg.OwnIPv4 + ":" + cfg.OwnPort
 	mp["hprt"] = cfg.HTTPPort
 
 	_ = json.NewEncoder(w).Encode(mp)
 }
 
 func discoverActiveNode(actvnd string) *Config {
-	rsp, err := http.Get(actvnd + "/config")
+	rsp, err := http.Get(fmt.Sprintf("http://%s/config", actvnd))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -120,15 +122,17 @@ func discoverActiveNode(actvnd string) *Config {
 }
 
 func readMap(mp map[string]string) *Config {
-	return buildConfig(mp["vipmask"], mp["ifacename"], "Node2", mp["prt"], mp["prskt"], mp["hprt"])
+	return buildConfig(mp["vipmask"], mp["ifacename"], "Node2", mp["prskt"], mp["hprt"])
 }
 
-func buildConfig(vipmask, ifacename, nd, prt, prskt, hprt string) *Config {
+func buildConfig(vipmask, ifacename, nd, prskt, hprt string) *Config {
 	vipStr := strings.Split(vipmask, "/")[0]
 	vip, err := netip.ParseAddr(vipStr)
 	if err != nil {
 		log.Fatalf("IP parse error: %v", err)
 	}
+
+	prt := strings.Split(prskt, ":")[1]
 
 	link, err := netlink.LinkByName(ifacename)
 	if err != nil {
@@ -190,8 +194,23 @@ func validateEnvVars() *Config {
 		log.Fatalf("Interface error: %v", err)
 	}
 
+	addrs, err := iface.Addrs()
+	if err != nil {
+		log.Fatalf("Interface IPv4 error: %v", err)
+	}
+
+	if len(addrs) < 1 {
+		log.Fatal("Interface with no IPv4")
+	}
+
+	ipnet, ok := addrs[0].(*net.IPNet)
+	if !ok {
+		log.Fatal("Interface with non-supported IP")
+	}
+
 	cfg := &Config{
 		NodeID:     "Node1",
+		OwnIPv4:    ipnet.IP.String(),
 		OwnPort:    getEnv("OWN_PORT"),
 		PeerSocket: getEnv("PEER_ADDR"),
 		VIPAddr:    vip,
