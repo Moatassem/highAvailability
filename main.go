@@ -32,16 +32,16 @@ const (
 var StandbyState *NodeState
 
 type NodeState struct {
-	mu          sync.RWMutex      `json:"-"`
-	Data        map[string]string `json:"data"`
-	IsActive    bool              `json:"isActive"`
-	SelfMAC     string            `json:"SelfMAC"`
-	PeerMAC     string            `json:"PeerMAC"`
-	IsPeerAlive bool              `json:"IsPeerAlive"`
-	LastContact time.Time         `json:"-"`
-	myConn      *net.UDPConn      `json:"-"`
-	myPeer      *net.UDPAddr      `json:"-"`
-	isSet       bool              `json:"-"`
+	mu            sync.RWMutex      `json:"-"`
+	Data          map[string]string `json:"data"`
+	IsActive      bool              `json:"isActive"`
+	SelfMAC       string            `json:"SelfMAC"`
+	PeerMAC       string            `json:"PeerMAC"`
+	IsPeerAlive   bool              `json:"IsPeerAlive"`
+	LastContact   time.Time         `json:"-"`
+	isActiveFound bool              `json:"-"`
+	myConn        *net.UDPConn      `json:"-"`
+	myPeer        *net.UDPAddr      `json:"-"`
 }
 
 func NewNodeState(cfg Config) *NodeState {
@@ -182,6 +182,7 @@ func (nds *NodeState) udpListener(cfg Config) {
 	if err != nil {
 		log.Fatal("UDP listen error:", err)
 	}
+	//nolint:errcheck
 	defer conn.Close()
 
 	nds.myConn = conn
@@ -215,8 +216,8 @@ func (nds *NodeState) udpListener(cfg Config) {
 		}
 		if receivedState.IsActive && !nds.IsActive {
 			nds.Data = receivedState.Data
-			if !nds.isSet {
-				nds.isSet = true
+			if !nds.isActiveFound {
+				nds.isActiveFound = true
 				log.Print("Active Node alive, I'm the Standby Node")
 				log.Printf("Virtual (floating) IP is (%s) currently tied to Hardware Address: %s", cfg.VIP, nds.PeerMAC)
 			}
@@ -374,10 +375,11 @@ func getVIPMAC(clnt *arp.Client, cfg Config) (string, bool) {
 	if clnt == nil {
 		return "N/A", false
 	}
+	//nolint:errcheck
 	defer clnt.Close()
 
 	deadline := time.Now().Add(heartbeatTimeout)
-	clnt.SetReadDeadline(deadline)
+	_ = clnt.SetReadDeadline(deadline)
 
 	hwaddr, err := clnt.Resolve(cfg.VIPAddr)
 	if err != nil {
