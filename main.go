@@ -136,6 +136,7 @@ func validateEnvVars() Config {
 
 func main() {
 	cfg := validateEnvVars()
+	defer recoverPanics(cfg)
 
 	mystate := NewNodeState(cfg)
 
@@ -421,8 +422,18 @@ func setupSignalHandler(cfg Config) {
 
 	go func() {
 		<-sigCh
-		log.Printf("Shutting down, cleaning VIP...")
-		_ = manageVIP(cfg, false)
-		os.Exit(0)
+		cleanupVIPnDie(cfg, "Shutting down, cleaning VIP...")
 	}()
+}
+
+func recoverPanics(cfg Config) {
+	if r := recover(); r != nil {
+		cleanupVIPnDie(cfg, r.(string))
+	}
+}
+
+func cleanupVIPnDie(cfg Config, msg string) {
+	log.Print(msg)
+	_ = manageVIP(cfg, false)
+	os.Exit(0)
 }
