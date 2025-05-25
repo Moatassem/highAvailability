@@ -93,12 +93,12 @@ type Config struct {
 	LinkAddr   *netlink.Addr
 }
 
-func validateEnvVars() (netip.Addr, string, string, netlink.Link, *netlink.Addr, *net.Interface) {
+func validateEnvVars() Config {
 	ifacename := getEnv("INTERFACE", "ens33")
 	vipmask := getEnv("VIPMask", "192.168.1.100/24")
 
-	ipStr := strings.Split(vipmask, "/")[0]
-	vip, err := netip.ParseAddr(ipStr)
+	vipStr := strings.Split(vipmask, "/")[0]
+	vip, err := netip.ParseAddr(vipStr)
 	if err != nil {
 		log.Fatalf("IP parse error: %v", err)
 	}
@@ -118,42 +118,33 @@ func validateEnvVars() (netip.Addr, string, string, netlink.Link, *netlink.Addr,
 		log.Fatalf("Interface error: %v", err)
 	}
 
-	return vip, ipStr, vipmask, link, lnkaddr, iface
-}
-
-func main() {
-	vip, vipaddr, vipmask, lnk, lnkaddr, iface := validateEnvVars()
-
 	cfg := Config{
 		NodeID:     getEnv("NODE_ID", "node1"),
 		OwnPort:    getEnv("OWN_PORT", "9999"),
 		PeerSocket: getEnv("PEER_ADDR", "192.168.1.2:9999"),
 		VIPAddr:    vip,
-		VIP:        vipaddr,
+		VIP:        vipStr,
 		VIPMask:    vipmask,
 		Interface:  iface,
-		Link:       lnk,
+		Link:       link,
 		LinkAddr:   lnkaddr,
 		HTTPPort:   getEnv("HTTP_PORT", "8080"),
 	}
+
+	return cfg
+}
+
+func main() {
+	cfg := validateEnvVars()
 
 	mystate := NewNodeState(cfg)
 
 	StandbyState = NewNodeSS(cfg)
 
-	// Setup signal handler
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
-	go func() {
-		<-sigCh
-		log.Printf("Shutting down, cleaning VIP...")
-		_ = manageVIP(cfg, false)
-		os.Exit(0)
-	}()
+	setupSignalHandler(cfg)
 
 	_ = manageVIP(cfg, false)
-	log.Print("VIP clean successful")
+	// log.Print("VIP clean successful")
 
 	log.Print("Detecting Active Node...")
 
@@ -397,4 +388,30 @@ func getEnv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func setupSignalHandler(cfg Config) {
+	signals := []os.Signal{
+		syscall.SIGHUP,  // Hangup detected on controlling terminal
+		syscall.SIGINT,  // Interrupt from keyboard (Ctrl+C)
+		syscall.SIGQUIT, // Quit from keyboard (Ctrl+\)
+		syscall.SIGILL,  // Illegal instruction
+		syscall.SIGABRT, // Abort signal
+		syscall.SIGFPE,  // Floating-point exception
+		syscall.SIGKILL, // Kill signal (cannot be caught or ignored)
+		syscall.SIGSEGV, // Segmentation fault
+		syscall.SIGPIPE, // Broken pipe
+		syscall.SIGALRM, // Timer signal
+		syscall.SIGTERM, // Termination signal
+	}
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, signals...)
+
+	go func() {
+		<-sigCh
+		log.Printf("Shutting down, cleaning VIP...")
+		_ = manageVIP(cfg, false)
+		os.Exit(0)
+	}()
 }
