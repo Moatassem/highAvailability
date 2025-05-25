@@ -429,5 +429,5 @@ func recoverPanics(cfg Config) {
 func cleanupVIPnDie(cfg Config, msg string) {
 	log.Print(msg)
 	_ = manageVIP(cfg, false)
-	os.Exit(0)
+	os.Exit(1)
 }
