@@ -148,7 +148,9 @@ func main() {
 
 	log.Print("Detecting Active Node...")
 
-	go mystate.udpListener(cfg)
+	mystate.initializeNode(cfg)
+
+	go mystate.udpHandler(cfg)
 	go mystate.httpServer(cfg)
 
 	mystate.activeElection(cfg)
@@ -156,7 +158,7 @@ func main() {
 	// select {} // Block main thread
 }
 
-func (nds *NodeState) udpListener(cfg Config) {
+func (nds *NodeState) initializeNode(cfg Config) {
 	addr, err := net.ResolveUDPAddr("udp", ":"+cfg.OwnPort)
 	if err != nil {
 		log.Fatal("Local UDP resolve error:", err)
@@ -184,9 +186,12 @@ func (nds *NodeState) udpListener(cfg Config) {
 		log.Printf("Failed to set IPv4 TOS: %v (may need CAP_NET_ADMIN)", err)
 	}
 
+}
+
+func (nds *NodeState) udpHandler(cfg Config) {
 	buf := make([]byte, 4096)
 	for {
-		n, _, err := conn.ReadFromUDP(buf)
+		n, _, err := nds.myConn.ReadFromUDP(buf)
 		if err != nil {
 			log.Printf("UDP read error: %v", err)
 			continue
