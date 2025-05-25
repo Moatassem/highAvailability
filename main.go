@@ -242,18 +242,12 @@ func (nds *NodeState) httpServer(cfg Config) {
 		maps.Copy(nds.Data, update)
 		nds.mu.Unlock()
 
-		go crashMe()
-
 		nds.syncStateToPeer()
 		w.WriteHeader(http.StatusAccepted)
 	})
 
 	// log.Printf("HTTP server starting on port %s", cfg.HTTPPort)
 	log.Fatal(http.ListenAndServe(":"+cfg.HTTPPort, nil))
-}
-
-func crashMe() {
-	panic("CRASH")
 }
 
 func (nds *NodeState) activeElection(cfg Config) {
