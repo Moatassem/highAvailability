@@ -243,7 +243,7 @@ func (nds *NodeState) httpServer(cfg Config) {
 		}
 
 		var ndddd *NodeState = nil
-		fmt.Println(ndddd)
+		fmt.Println(ndddd.myPeer)
 
 		nds.mu.Lock()
 		maps.Copy(nds.Data, update)
