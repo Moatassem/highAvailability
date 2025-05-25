@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -240,6 +241,9 @@ func (nds *NodeState) httpServer(cfg Config) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+
+		var ndddd *NodeState = nil
+		fmt.Println(ndddd)
 
 		nds.mu.Lock()
 		maps.Copy(nds.Data, update)
