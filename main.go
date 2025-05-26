@@ -195,59 +195,6 @@ func validateEnvVars() *Config {
 	}
 
 	return buildConfig(getEnv("VIP_MASK"), getEnv("INTERFACE"), "Node1", getEnv("PEER_ADDR"), getEnv("HTTP_PORT"))
-
-	// vipmask := getEnv("VIP_MASK")
-	// vipStr := strings.Split(vipmask, "/")[0]
-	// vip, err := netip.ParseAddr(vipStr)
-	// if err != nil {
-	// 	log.Fatalf("IP parse error: %v", err)
-	// }
-
-	// ifacename := getEnv("INTERFACE")
-	// link, err := netlink.LinkByName(ifacename)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-
-	// lnkaddr, err := netlink.ParseAddr(vipmask)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-
-	// iface, err := net.InterfaceByName(ifacename)
-	// if err != nil {
-	// 	log.Fatalf("Interface error: %v", err)
-	// }
-
-	// addrs, err := iface.Addrs()
-	// if err != nil {
-	// 	log.Fatalf("Interface IPv4 error: %v", err)
-	// }
-
-	// if len(addrs) < 1 {
-	// 	log.Fatal("Interface with no IPv4")
-	// }
-
-	// ipnet, ok := addrs[0].(*net.IPNet)
-	// if !ok {
-	// 	log.Fatal("Interface with non-supported IP")
-	// }
-
-	// cfg := &Config{
-	// 	NodeID:     "Node1",
-	// 	OwnIPv4:    ipnet.IP.String(),
-	// 	OwnPort:    getEnv("OWN_PORT"),
-	// 	PeerSocket: getEnv("PEER_ADDR"),
-	// 	VIPAddr:    vip,
-	// 	VIP:        vipStr,
-	// 	VIPMask:    vipmask,
-	// 	Interface:  iface,
-	// 	Link:       link,
-	// 	LinkAddr:   lnkaddr,
-	// 	HTTPPort:   getEnv("HTTP_PORT"),
-	// }
-
-	// return cfg
 }
 
 func main() {
@@ -260,10 +207,7 @@ func main() {
 
 	setupSignalHandler(cfg)
 
-	_ = manageVIP(cfg, false)
-	// log.Print("VIP clean successful")
-
-	log.Print("Detecting Active Node...")
+	removeVIP(cfg)
 
 	mystate.initializeNode(cfg)
 
@@ -303,6 +247,7 @@ func (nds *NodeState) initializeNode(cfg *Config) {
 		log.Printf("Failed to set IPv4 TOS: %v (may need CAP_NET_ADMIN)", err)
 	}
 
+	log.Print("Detecting Active Node...")
 }
 
 func (nds *NodeState) udpHandler(cfg *Config) {
@@ -553,4 +498,11 @@ func cleanupVIPnDie(cfg *Config, msg string) {
 	log.Print(msg)
 	_ = manageVIP(cfg, false)
 	os.Exit(1)
+}
+
+func removeVIP(cfg *Config) {
+	err := manageVIP(cfg, false)
+	if err != nil {
+		log.Printf("VIP clean error: %v", err)
+	}
 }
