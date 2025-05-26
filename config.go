@@ -15,6 +15,10 @@ import (
 	"github.com/vishvananda/netlink"
 )
 
+const (
+	ConfigFilename = "config.json"
+)
+
 type (
 	RunConfig struct {
 		NodeID     string
@@ -159,7 +163,7 @@ func readConfig() (SetupConfig, bool) {
 	}
 	exeDir := filepath.Dir(exePath)
 
-	configPath := filepath.Join(exeDir, "config.json")
+	configPath := filepath.Join(exeDir, ConfigFilename)
 
 	// Open the file
 	file, err := os.Open(configPath)
@@ -189,7 +193,7 @@ func (cfg *RunConfig) writeConfig() {
 		log.Printf("Config marshal error: %v", err)
 	}
 
-	if err := os.WriteFile("data.json", jsonData, 0644); err != nil {
+	if err := os.WriteFile(ConfigFilename, jsonData, 0644); err != nil {
 		log.Printf("Write config error: %v", err)
 	}
 }
