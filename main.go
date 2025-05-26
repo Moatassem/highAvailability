@@ -1,16 +1,12 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net"
 	"net/http"
-	"net/netip"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -48,7 +44,7 @@ type NodeState struct {
 	myPeer        *net.UDPAddr      `json:"-"`
 }
 
-func NewNodeState(cfg *Config) *NodeState {
+func NewNodeState(cfg *RunConfig) *NodeState {
 	nds := &NodeState{
 		Data:        make(map[string]string),
 		SelfMAC:     cfg.Interface.HardwareAddr.String(),
@@ -58,7 +54,7 @@ func NewNodeState(cfg *Config) *NodeState {
 	return nds
 }
 
-func NewNodeSS(cfg *Config) *NodeState {
+func NewNodeSS(cfg *RunConfig) *NodeState {
 	return &NodeState{SelfMAC: cfg.Interface.HardwareAddr.String()}
 }
 
@@ -84,121 +80,8 @@ func (nds *NodeState) SendData(w http.ResponseWriter, _ *http.Request) {
 	_ = json.NewEncoder(w).Encode(nds)
 }
 
-type Config struct {
-	NodeID     string
-	OwnIPv4    string
-	OwnPort    string
-	PeerSocket string
-	VIP        string
-	VIPAddr    netip.Addr
-	VIPMask    string
-	HTTPPort   string
-	Interface  *net.Interface
-	Link       netlink.Link
-	LinkAddr   *netlink.Addr
-}
-
-func (cfg *Config) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
-	mp := make(map[string]string, 4)
-	mp["vipmask"] = cfg.VIPMask
-	mp["ifacename"] = cfg.Interface.Name
-	// mp["prt"] = cfg.OwnPort
-	mp["peerskt"] = cfg.OwnIPv4 + ":" + cfg.OwnPort
-	mp["httpport"] = cfg.HTTPPort
-
-	_ = json.NewEncoder(w).Encode(mp)
-}
-
-func discoverActiveNode(actvnd string) *Config {
-	ctx, cancel := context.WithTimeout(context.Background(), configPullTimeout)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://%s/config", actvnd), nil)
-	if err != nil {
-		log.Fatalf("Config pull error: %v", err)
-	}
-
-	rsp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	defer rsp.Body.Close()
-
-	var mp map[string]string
-	if err := json.NewDecoder(rsp.Body).Decode(&mp); err != nil {
-		log.Fatal(err)
-	}
-
-	return buildConfig(mp["vipmask"], mp["ifacename"], "Node2", mp["peerskt"], mp["httpport"])
-}
-
-func buildConfig(vipmask, ifacename, nd, prskt, hprt string) *Config {
-	vipStr := strings.Split(vipmask, "/")[0]
-	vip, err := netip.ParseAddr(vipStr)
-	if err != nil {
-		log.Fatalf("IP parse error: %v", err)
-	}
-
-	prt := strings.Split(prskt, ":")[1]
-
-	link, err := netlink.LinkByName(ifacename)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	lnkaddr, err := netlink.ParseAddr(vipmask)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	iface, err := net.InterfaceByName(ifacename)
-	if err != nil {
-		log.Fatalf("Interface error: %v", err)
-	}
-
-	addrs, err := iface.Addrs()
-	if err != nil {
-		log.Fatalf("Interface IPv4 error: %v", err)
-	}
-
-	if len(addrs) < 1 {
-		log.Fatal("Interface with no IPv4")
-	}
-
-	ipnet, ok := addrs[0].(*net.IPNet)
-	if !ok {
-		log.Fatal("Interface with non-supported IP")
-	}
-
-	cfg := &Config{
-		NodeID:     nd,
-		OwnIPv4:    ipnet.IP.String(),
-		OwnPort:    prt,
-		PeerSocket: prskt,
-		VIPAddr:    vip,
-		VIP:        vipStr,
-		VIPMask:    vipmask,
-		Interface:  iface,
-		Link:       link,
-		LinkAddr:   lnkaddr,
-		HTTPPort:   hprt,
-	}
-
-	return cfg
-}
-
-func validateEnvVars() *Config {
-	activeNode, ok := getEnvIfExists("ACTIVE_NODE_WS")
-	if ok {
-		return discoverActiveNode(activeNode)
-	}
-
-	return buildConfig(getEnv("VIP_MASK"), getEnv("INTERFACE"), "Node1", getEnv("PEER_ADDR"), getEnv("HTTP_PORT"))
-}
-
 func main() {
-	cfg := validateEnvVars()
+	cfg := setupConfig()
 	defer recoverPanics(cfg)
 
 	mystate := NewNodeState(cfg)
@@ -219,7 +102,7 @@ func main() {
 	// select {} // Block main thread
 }
 
-func (nds *NodeState) initializeNode(cfg *Config) {
+func (nds *NodeState) initializeNode(cfg *RunConfig) {
 	addr, err := net.ResolveUDPAddr("udp", ":"+cfg.OwnPort)
 	if err != nil {
 		log.Fatal("Local UDP resolve error:", err)
@@ -250,7 +133,7 @@ func (nds *NodeState) initializeNode(cfg *Config) {
 	log.Print("Detecting Active Node...")
 }
 
-func (nds *NodeState) udpHandler(cfg *Config) {
+func (nds *NodeState) udpHandler(cfg *RunConfig) {
 	buf := make([]byte, 4096)
 	for {
 		n, _, err := nds.myConn.ReadFromUDP(buf)
@@ -284,7 +167,7 @@ func (nds *NodeState) udpHandler(cfg *Config) {
 	}
 }
 
-func (nds *NodeState) httpServer(cfg *Config) {
+func (nds *NodeState) httpServer(cfg *RunConfig) {
 	http.HandleFunc("/", nds.SendData)
 
 	http.Handle("/config", cfg)
@@ -313,7 +196,7 @@ func (nds *NodeState) httpServer(cfg *Config) {
 	log.Fatal(http.ListenAndServe(":"+cfg.HTTPPort, nil))
 }
 
-func (nds *NodeState) activeElection(cfg *Config) {
+func (nds *NodeState) activeElection(cfg *RunConfig) {
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
 
@@ -347,7 +230,7 @@ func (nds *NodeState) setPeerStatus(sts bool, msg string) {
 	nds.IsPeerAlive = sts
 }
 
-func (nds *NodeState) becomeActive(cfg *Config) {
+func (nds *NodeState) becomeActive(cfg *RunConfig) {
 	nds.mu.Lock()
 	defer nds.mu.Unlock()
 
@@ -365,7 +248,7 @@ func (nds *NodeState) becomeActive(cfg *Config) {
 	go nds.seizeVIP(cfg)
 }
 
-func (nds *NodeState) seizeVIP(cfg *Config) {
+func (nds *NodeState) seizeVIP(cfg *RunConfig) {
 	client := sendMultiGARPs(cfg)
 
 	resolvedMAC, ok := getVIPMAC(client, cfg)
@@ -400,14 +283,14 @@ func (nds *NodeState) syncStateToPeer() {
 	}
 }
 
-func manageVIP(cfg *Config, add bool) error {
+func manageVIP(cfg *RunConfig, add bool) error {
 	if add {
 		return netlink.AddrReplace(cfg.Link, cfg.LinkAddr)
 	}
 	return netlink.AddrDel(cfg.Link, cfg.LinkAddr)
 }
 
-func sendMultiGARPs(cfg *Config) *arp.Client {
+func sendMultiGARPs(cfg *RunConfig) *arp.Client {
 	client, err := arp.Dial(cfg.Interface)
 	if err != nil {
 		log.Printf("ARP client error: %v", err)
@@ -431,7 +314,7 @@ func sendMultiGARPs(cfg *Config) *arp.Client {
 	return client
 }
 
-func getVIPMAC(clnt *arp.Client, cfg *Config) (string, bool) {
+func getVIPMAC(clnt *arp.Client, cfg *RunConfig) (string, bool) {
 	if clnt == nil {
 		return "N/A", false
 	}
@@ -464,7 +347,7 @@ func getEnvIfExists(key string) (string, bool) {
 	return os.LookupEnv(key)
 }
 
-func setupSignalHandler(cfg *Config) {
+func setupSignalHandler(cfg *RunConfig) {
 	signals := []os.Signal{
 		syscall.SIGHUP,  // Hangup detected on controlling terminal
 		syscall.SIGINT,  // Interrupt from keyboard (Ctrl+C)
@@ -488,19 +371,19 @@ func setupSignalHandler(cfg *Config) {
 	}()
 }
 
-func recoverPanics(cfg *Config) {
+func recoverPanics(cfg *RunConfig) {
 	if r := recover(); r != nil {
 		cleanupVIPnDie(cfg, r.(string))
 	}
 }
 
-func cleanupVIPnDie(cfg *Config, msg string) {
+func cleanupVIPnDie(cfg *RunConfig, msg string) {
 	log.Print(msg)
 	_ = manageVIP(cfg, false)
 	os.Exit(1)
 }
 
-func removeVIP(cfg *Config) {
+func removeVIP(cfg *RunConfig) {
 	err := manageVIP(cfg, false)
 	if err != nil {
 		log.Printf("VIP clean error: %v", err)
