@@ -159,7 +159,7 @@ func (nds *NodeState) udpHandler(cfg *RunConfig) {
 			nds.Data = receivedState.Data
 			if !nds.isActiveFound {
 				nds.isActiveFound = true
-				log.Print("Active Node alive, I'm the Standby Node")
+				log.Printf("Active Node alive (%s), I'm the Standby Node (%s)", cfg.PeerSocket, cfg.OwnIPv4+":"+cfg.OwnPort)
 				log.Printf("Virtual (floating) IP is (%s) currently tied to Hardware Address: %s", cfg.VIP, nds.PeerMAC)
 			}
 		}
@@ -238,7 +238,7 @@ func (nds *NodeState) becomeActive(cfg *RunConfig) {
 		return
 	}
 
-	log.Print("Assuming myself as the Active Node")
+	log.Printf("Assuming myself as the Active Node (%s)", cfg.OwnIPv4+":"+cfg.OwnPort)
 	if err := manageVIP(cfg, true); err != nil {
 		log.Printf("VIP assignment failed: %v", err)
 		return
