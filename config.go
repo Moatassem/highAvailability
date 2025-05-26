@@ -34,7 +34,7 @@ type (
 		LinkAddr   *netlink.Addr
 	}
 
-	SetupConfig struct {
+	StartConfig struct {
 		NodeID        string `json:"nodeId,omitempty"`
 		OwnIPv4       string `json:"ownIPv4,omitempty"`
 		OwnPort       string `json:"ownPort,omitempty"`
@@ -47,7 +47,7 @@ type (
 )
 
 func (cfg *RunConfig) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
-	sconfig := SetupConfig{
+	sconfig := StartConfig{
 		VIPMask:       cfg.VIPMask,
 		InterfaceName: cfg.Interface.Name,
 		PeerSocket:    cfg.OwnIPv4 + ":" + cfg.OwnPort,
@@ -72,7 +72,7 @@ func retrieveConfig(actvnd string) *RunConfig {
 
 	defer rsp.Body.Close()
 
-	var sc SetupConfig
+	var sc StartConfig
 	if err := json.NewDecoder(rsp.Body).Decode(&sc); err != nil {
 		log.Fatal(err)
 	}
@@ -153,8 +153,8 @@ func setupConfig() *RunConfig {
 	return rc
 }
 
-func readConfig() (SetupConfig, bool) {
-	var sc SetupConfig
+func readConfig() (StartConfig, bool) {
+	var sc StartConfig
 
 	exePath, err := os.Executable()
 	if err != nil {
@@ -181,7 +181,7 @@ func readConfig() (SetupConfig, bool) {
 }
 
 func (cfg *RunConfig) writeConfig() {
-	sc := SetupConfig{
+	sc := StartConfig{
 		VIPMask:       cfg.VIPMask,
 		InterfaceName: cfg.Interface.Name,
 		NodeID:        cfg.NodeID,
