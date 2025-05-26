@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -25,6 +26,8 @@ import (
 const (
 	heartbeatTimeout  = 50 * time.Millisecond
 	heartbeatInterval = 10 * time.Millisecond
+
+	configPullTimeout = 30 * time.Second
 
 	heartbeatsCount = 5
 	GARPAttempts    = 5
@@ -100,17 +103,26 @@ func (cfg *Config) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	mp["vipmask"] = cfg.VIPMask
 	mp["ifacename"] = cfg.Interface.Name
 	// mp["prt"] = cfg.OwnPort
-	mp["prskt"] = cfg.OwnIPv4 + ":" + cfg.OwnPort
-	mp["hprt"] = cfg.HTTPPort
+	mp["peerskt"] = cfg.OwnIPv4 + ":" + cfg.OwnPort
+	mp["httpport"] = cfg.HTTPPort
 
 	_ = json.NewEncoder(w).Encode(mp)
 }
 
 func discoverActiveNode(actvnd string) *Config {
-	rsp, err := http.Get(fmt.Sprintf("http://%s/config", actvnd))
+	ctx, cancel := context.WithTimeout(context.Background(), configPullTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://%s/config", actvnd), nil)
+	if err != nil {
+		log.Fatalf("Config pull error: %v", err)
+	}
+
+	rsp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	defer rsp.Body.Close()
 
 	var mp map[string]string
@@ -118,11 +130,7 @@ func discoverActiveNode(actvnd string) *Config {
 		log.Fatal(err)
 	}
 
-	return readMap(mp)
-}
-
-func readMap(mp map[string]string) *Config {
-	return buildConfig(mp["vipmask"], mp["ifacename"], "Node2", mp["prskt"], mp["hprt"])
+	return buildConfig(mp["vipmask"], mp["ifacename"], "Node2", mp["peerskt"], mp["httpport"])
 }
 
 func buildConfig(vipmask, ifacename, nd, prskt, hprt string) *Config {
@@ -134,51 +142,6 @@ func buildConfig(vipmask, ifacename, nd, prskt, hprt string) *Config {
 
 	prt := strings.Split(prskt, ":")[1]
 
-	link, err := netlink.LinkByName(ifacename)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	lnkaddr, err := netlink.ParseAddr(vipmask)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	iface, err := net.InterfaceByName(ifacename)
-	if err != nil {
-		log.Fatalf("Interface error: %v", err)
-	}
-
-	cfg := &Config{
-		NodeID:     nd,
-		OwnPort:    prt,
-		PeerSocket: prskt,
-		VIPAddr:    vip,
-		VIP:        vipStr,
-		VIPMask:    vipmask,
-		Interface:  iface,
-		Link:       link,
-		LinkAddr:   lnkaddr,
-		HTTPPort:   hprt,
-	}
-
-	return cfg
-}
-
-func validateEnvVars() *Config {
-	activeNode, ok := getEnvIfExists("ACTIVE_NODE_WS")
-	if ok {
-		return discoverActiveNode(activeNode)
-	}
-
-	vipmask := getEnv("VIP_MASK")
-	vipStr := strings.Split(vipmask, "/")[0]
-	vip, err := netip.ParseAddr(vipStr)
-	if err != nil {
-		log.Fatalf("IP parse error: %v", err)
-	}
-
-	ifacename := getEnv("INTERFACE")
 	link, err := netlink.LinkByName(ifacename)
 	if err != nil {
 		log.Fatal(err)
@@ -209,20 +172,82 @@ func validateEnvVars() *Config {
 	}
 
 	cfg := &Config{
-		NodeID:     "Node1",
+		NodeID:     nd,
 		OwnIPv4:    ipnet.IP.String(),
-		OwnPort:    getEnv("OWN_PORT"),
-		PeerSocket: getEnv("PEER_ADDR"),
+		OwnPort:    prt,
+		PeerSocket: prskt,
 		VIPAddr:    vip,
 		VIP:        vipStr,
 		VIPMask:    vipmask,
 		Interface:  iface,
 		Link:       link,
 		LinkAddr:   lnkaddr,
-		HTTPPort:   getEnv("HTTP_PORT"),
+		HTTPPort:   hprt,
 	}
 
 	return cfg
+}
+
+func validateEnvVars() *Config {
+	activeNode, ok := getEnvIfExists("ACTIVE_NODE_WS")
+	if ok {
+		return discoverActiveNode(activeNode)
+	}
+
+	return buildConfig(getEnv("VIP_MASK"), getEnv("INTERFACE"), "Node1", getEnv("PEER_ADDR"), getEnv("HTTP_PORT"))
+
+	// vipmask := getEnv("VIP_MASK")
+	// vipStr := strings.Split(vipmask, "/")[0]
+	// vip, err := netip.ParseAddr(vipStr)
+	// if err != nil {
+	// 	log.Fatalf("IP parse error: %v", err)
+	// }
+
+	// ifacename := getEnv("INTERFACE")
+	// link, err := netlink.LinkByName(ifacename)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+
+	// lnkaddr, err := netlink.ParseAddr(vipmask)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+
+	// iface, err := net.InterfaceByName(ifacename)
+	// if err != nil {
+	// 	log.Fatalf("Interface error: %v", err)
+	// }
+
+	// addrs, err := iface.Addrs()
+	// if err != nil {
+	// 	log.Fatalf("Interface IPv4 error: %v", err)
+	// }
+
+	// if len(addrs) < 1 {
+	// 	log.Fatal("Interface with no IPv4")
+	// }
+
+	// ipnet, ok := addrs[0].(*net.IPNet)
+	// if !ok {
+	// 	log.Fatal("Interface with non-supported IP")
+	// }
+
+	// cfg := &Config{
+	// 	NodeID:     "Node1",
+	// 	OwnIPv4:    ipnet.IP.String(),
+	// 	OwnPort:    getEnv("OWN_PORT"),
+	// 	PeerSocket: getEnv("PEER_ADDR"),
+	// 	VIPAddr:    vip,
+	// 	VIP:        vipStr,
+	// 	VIPMask:    vipmask,
+	// 	Interface:  iface,
+	// 	Link:       link,
+	// 	LinkAddr:   lnkaddr,
+	// 	HTTPPort:   getEnv("HTTP_PORT"),
+	// }
+
+	// return cfg
 }
 
 func main() {
@@ -486,7 +511,7 @@ func getEnv(key string) string {
 	if value, ok := os.LookupEnv(key); ok {
 		return value
 	}
-	os.Exit(1)
+	log.Fatalf("Missing mandatory variable [%s]", key)
 	return ""
 }
 
